@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Readings — IoT Monitoring{% endblock %}
+{% block n2 %}active{% endblock %}
+{% block content %}
+
+<h1>Readings</h1>
+<p class="sub">Historical sensor data stored in the cloud database</p>
+
+<div class="filters">
+  <a href="/readings?mode=all&limit={{ limit }}" class="{{ 'on' if mode == 'all' }}">All modes</a>
+  <a href="/readings?mode=naive&limit={{ limit }}" class="{{ 'on' if mode == 'naive' }}">Naive</a>
+  <a href="/readings?mode=smart&limit={{ limit }}" class="{{ 'on' if mode == 'smart' }}">Smart edge</a>
+  <span style="flex:1"></span>
+  <a href="/readings?mode={{ mode }}&limit=100" class="{{ 'on' if limit == 100 }}">100</a>
+  <a href="/readings?mode={{ mode }}&limit=500" class="{{ 'on' if limit == 500 }}">500</a>
+</div>
+
+<div class="card" style="padding:6px 8px;">
+{% if rows %}
+<table>
+  <thead>
+    <tr>
+      <th>ID</th><th>Device</th><th>Temp (&deg;C)</th><th>Humidity (%)</th>
+      <th>Mode</th><th>Status</th><th>Device time</th><th>Server time</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td style="color:var(--muted);">{{ r.id }}</td>
+      <td>{{ r.device_id }}</td>
+      <td>{{ '%.2f'|format(r.temperature) }}</td>
+      <td>{{ '%.0f'|format(r.humidity) }}</td>
+      <td><span class="tag {{ r.mode }}">{{ r.mode }}</span></td>
+      <td>{% if r.anomaly_flag %}<span class="tag alert">alert</span>{% else %}—{% endif %}</td>
+      <td style="color:var(--muted);">{{ r.device_ts.strftime('%H:%M:%S') if r.device_ts else '—' }}</td>
+      <td style="color:var(--muted);">{{ r.server_ts.strftime('%Y-%m-%d %H:%M:%S') if r.server_ts else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No readings found for this filter</div>
+{% endif %}
+</div>
+
+<p class="sub" style="margin-top:16px;">Showing {{ rows|length }} rows</p>
+
+{% endblock %}

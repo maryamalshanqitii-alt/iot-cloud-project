@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — IoT Monitoring{% endblock %}
+{% block n1 %}active{% endblock %}
+{% block content %}
+
+<h1>Dashboard</h1>
+<p class="sub">Live status of the environmental monitoring system</p>
+
+<div style="margin-bottom:22px;">
+  {% if s.online %}
+    <span class="pill ok"><span class="dot"></span> Device online</span>
+  {% else %}
+    <span class="pill off"><span class="dot"></span> Device offline</span>
+  {% endif %}
+  {% if s.latest and s.latest.anomaly_flag %}
+    <span class="pill warn" style="margin-left:8px;">Temperature above {{ s.threshold }}&deg;C</span>
+  {% endif %}
+</div>
+
+<div class="grid g4">
+  <div class="card">
+    <div class="label">Temperature</div>
+    <div class="value" style="color:var(--accent);">
+      {{ '%.1f'|format(s.latest.temperature) if s.latest else '—' }}<span class="unit">&deg;C</span>
+    </div>
+    <div class="foot">Threshold {{ s.threshold }}&deg;C</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Humidity</div>
+    <div class="value" style="color:var(--ok);">
+      {{ '%.0f'|format(s.latest.humidity) if s.latest else '—' }}<span class="unit">%</span>
+    </div>
+    <div class="foot">Relative humidity</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Total readings</div>
+    <div class="value">{{ s.totals.total or 0 }}</div>
+    <div class="foot">{{ s.totals.naive_count or 0 }} naive &middot; {{ s.totals.smart_count or 0 }} smart</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Anomalies</div>
+    <div class="value" style="color:var(--warn);">{{ s.totals.anomalies or 0 }}</div>
+    <div class="foot">Readings above threshold</div>
+  </div>
+</div>
+
+<div class="grid g2">
+  <div class="card">
+    <div class="label" style="margin-bottom:14px;">Statistics</div>
+    <table>
+      <tbody>
+        <tr><td style="color:var(--muted);">Average temperature</td>
+            <td style="text-align:right;">{{ s.totals.avg_temp or '—' }} &deg;C</td></tr>
+        <tr><td style="color:var(--muted);">Maximum temperature</td>
+            <td style="text-align:right;">{{ s.totals.max_temp or '—' }} &deg;C</td></tr>
+        <tr><td style="color:var(--muted);">Average humidity</td>
+            <td style="text-align:right;">{{ s.totals.avg_hum or '—' }} %</td></tr>
+        <tr><td style="color:var(--muted);">Last reading</td>
+            <td style="text-align:right;">{{ s.last_seen[:19].replace('T',' ') if s.last_seen else '—' }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:14px;">Devices</div>
+    {% if s.devices %}
+    <table>
+      <thead><tr><th>Device</th><th>Readings</th><th>Last seen</th></tr></thead>
+      <tbody>
+        {% for d in s.devices %}
+        <tr>
+          <td>{{ d.device_id }}</td>
+          <td>{{ d.readings }}</td>
+          <td>{{ d.last_seen.strftime('%Y-%m-%d %H:%M') if d.last_seen else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No devices yet</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

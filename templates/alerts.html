@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Alerts — IoT Monitoring{% endblock %}
+{% block n4 %}active{% endblock %}
+{% block content %}
+
+<h1>Alerts</h1>
+<p class="sub">Readings where the edge device flagged a temperature above {{ threshold }}&deg;C</p>
+
+<div class="card" style="padding:6px 8px;">
+{% if rows %}
+<table>
+  <thead>
+    <tr><th>ID</th><th>Device</th><th>Temp (&deg;C)</th><th>Humidity (%)</th>
+        <th>Mode</th><th>Detected at</th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td style="color:var(--muted);">{{ r.id }}</td>
+      <td>{{ r.device_id }}</td>
+      <td style="color:var(--warn); font-weight:500;">{{ '%.2f'|format(r.temperature) }}</td>
+      <td>{{ '%.0f'|format(r.humidity) }}</td>
+      <td><span class="tag {{ r.mode }}">{{ r.mode }}</span></td>
+      <td style="color:var(--muted);">{{ r.server_ts.strftime('%Y-%m-%d %H:%M:%S') if r.server_ts else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No alerts recorded — all readings are within the safe range</div>
+{% endif %}
+</div>
+
+{% endblock %}

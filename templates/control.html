@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Control — IoT Monitoring{% endblock %}
+{% block n5 %}active{% endblock %}
+{% block content %}
+
+<h1>Device Control</h1>
+<p class="sub">Switch the edge device between Naive and Smart Edge mode remotely.
+The device polls this setting every 15&nbsp;seconds, so no USB cable is needed.</p>
+
+<div class="card" style="padding:18px;">
+  <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <div>
+      <div style="color:var(--muted); font-size:12px; text-transform:uppercase;
+                  letter-spacing:.08em;">Device</div>
+      <div style="font-size:18px; font-weight:600;">{{ device_id }}</div>
+    </div>
+    <div style="margin-left:auto; text-align:right;">
+      <div style="color:var(--muted); font-size:12px; text-transform:uppercase;
+                  letter-spacing:.08em;">Current mode</div>
+      <div id="modeLabel" style="font-size:22px; font-weight:600;
+           color:{{ 'var(--ok)' if mode == 'smart' else 'var(--warn)' }};">
+        {{ mode }}
+      </div>
+      <div id="updated" style="color:var(--muted); font-size:12px;">
+        {{ updated_at or '—' }}
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex; gap:10px; margin-top:20px; flex-wrap:wrap;">
+    <button class="btn" data-mode="naive">Set NAIVE (baseline)</button>
+    <button class="btn" data-mode="smart">Set SMART EDGE</button>
+  </div>
+
+  <div id="msg" style="margin-top:14px; font-size:14px; color:var(--muted);"></div>
+</div>
+
+<div class="card" style="padding:16px; margin-top:16px;">
+  <h2 style="margin-top:0; font-size:16px;">What each mode does</h2>
+  <table>
+    <thead><tr><th>&nbsp;</th><th>Naive</th><th>Smart Edge</th></tr></thead>
+    <tbody>
+      <tr><td>Sampling</td><td>1 / second</td><td>1 / second</td></tr>
+      <tr><td>Filtering</td><td>none</td><td>moving average, 5 samples</td></tr>
+      <tr><td>Transmission</td><td>every sample</td><td>only if &Delta;T &ge; 0.5&nbsp;&deg;C</td></tr>
+      <tr><td>Heartbeat</td><td>n/a</td><td>every 30&nbsp;s</td></tr>
+      <tr><td>Anomaly detection</td><td>cloud only</td><td>on the device</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .btn{
+    background:var(--panel2); color:var(--text); border:1px solid rgba(255,255,255,.12);
+    padding:12px 18px; border-radius:10px; font-size:15px; font-weight:500;
+    cursor:pointer; min-width:190px;
+  }
+  .btn:hover{border-color:var(--accent); color:var(--accent);}
+  .btn:active{transform:translateY(1px);}
+</style>
+
+<script>
+const DEVICE_ID = {{ device_id|tojson }};
+
+function paint(mode, updated){
+  const el = document.getElementById('modeLabel');
+  el.textContent = mode;
+  el.style.color = (mode === 'smart') ? 'var(--ok)' : 'var(--warn)';
+  if (updated) document.getElementById('updated').textContent = updated;
+}
+
+document.querySelectorAll('.btn').forEach(function(b){
+  b.addEventListener('click', function(){
+    const mode = b.dataset.mode;
+    const msg = document.getElementById('msg');
+    msg.textContent = 'Sending…';
+    fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({device_id: DEVICE_ID, mode: mode})
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { msg.textContent = 'Error: ' + d.error; return; }
+      paint(d.mode);
+      msg.textContent = 'Mode set to ' + d.mode +
+        '. The device will pick it up within 15 seconds.';
+    })
+    .catch(function(e){ msg.textContent = 'Request failed: ' + e; });
+  });
+});
+
+setInterval(function(){
+  fetch('/api/config?device_id=' + encodeURIComponent(DEVICE_ID))
+    .then(function(r){ return r.json(); })
+    .then(function(d){ paint(d.mode, d.updated_at); })
+    .catch(function(){});
+}, 15000);
+</script>
+
+{% endblock %}

@@ -7,10 +7,15 @@ managed by an Auto Scaling group.
 """
 
 import os
+import secrets
 import socket
 from datetime import datetime, timezone, timedelta
 
-from flask import Flask, request, jsonify, render_template
+from functools import wraps
+
+from flask import (Flask, request, jsonify, render_template, session,
+                   redirect, url_for, abort)
+from werkzeug.security import generate_password_hash, check_password_hash
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from jinja2 import ChoiceLoader, FileSystemLoader
@@ -21,6 +26,34 @@ app = Flask(__name__)
 
 # Templates may live either in ./templates or beside app.py.
 # Looking in both keeps the app working whichever layout the repo has.
+def _load_secret_key():
+    """
+    The session secret is kept in the database so that every instance the
+    Auto Scaling group launches signs sessions with the same key. Without
+    this, scaling out would silently log everybody out.
+    """
+    env = os.environ.get("SECRET_KEY")
+    if env:
+        return env
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""CREATE TABLE IF NOT EXISTS app_settings (
+                                 key   TEXT PRIMARY KEY,
+                                 value TEXT NOT NULL);""")
+                cur.execute("""INSERT INTO app_settings (key, value)
+                               VALUES ('secret_key', %s)
+                               ON CONFLICT (key) DO NOTHING;""",
+                            (secrets.token_hex(32),))
+                cur.execute("SELECT value FROM app_settings WHERE key = 'secret_key';")
+                return cur.fetchone()[0]
+    except Exception:
+        # Last resort: the app still runs, sessions just reset on restart.
+        return secrets.token_hex(32)
+
+
+app.permanent_session_lifetime = timedelta(hours=8)
+
 app.jinja_loader = ChoiceLoader([
     FileSystemLoader(os.path.join(BASE_DIR, "templates")),
     FileSystemLoader(BASE_DIR),
@@ -31,6 +64,7 @@ DB_NAME = os.environ.get("DB_NAME", "iotdb")
 DB_USER = os.environ.get("DB_USER", "iotuser")
 DB_PASS = os.environ.get("DB_PASS", "")
 API_KEY = os.environ.get("API_KEY", "")
+SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-in-production")
 
 ALERT_THRESHOLD = float(os.environ.get("ALERT_THRESHOLD", "32.0"))
 SERVER_NAME_TAG = socket.gethostname()
@@ -50,9 +84,225 @@ def query(sql, params=None, one=False):
             return cur.fetchone() if one else cur.fetchall()
 
 
+app.secret_key = _load_secret_key()
+
+
 # ----------------------------------------------------------------------
 # Health check (used by the ALB target group)
 # ----------------------------------------------------------------------
+
+# ======================= AUTHENTICATION =======================
+
+def audit(action, detail=None, username=None):
+    """Write one line to the audit trail. Never breaks the request."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO audit_log (username, action, detail, ip_address)
+                       VALUES (%s, %s, %s, %s);""",
+                    (username or session.get("username"), action, detail,
+                     request.headers.get("X-Forwarded-For", request.remote_addr))
+                )
+    except Exception:
+        pass
+
+
+def current_user():
+    if "username" not in session:
+        return None
+    return {"username": session["username"], "role": session.get("role", "viewer")}
+
+
+@app.context_processor
+def inject_user():
+    """Makes `user` available inside every template."""
+    return {"user": current_user()}
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not current_user():
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def admin_required(view):
+    """Authorisation: only an admin may pass."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        user = current_user()
+        if not user:
+            return redirect(url_for("login", next=request.path))
+        if user["role"] != "admin":
+            audit("access_denied", request.path)
+            if request.path.startswith("/api/"):
+                return jsonify(error="admin role required"), 403
+            return render_template("forbidden.html"), 403
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        if current_user():
+            return redirect(url_for("page_dashboard"))
+        return render_template("login.html", error=None)
+
+    username = (request.form.get("username") or "").strip()
+    password = request.form.get("password") or ""
+
+    if not username or not password:
+        return render_template("login.html",
+                               error="Enter both a username and a password."), 400
+
+    try:
+        row = query("SELECT * FROM users WHERE username = %s;", (username,), one=True)
+    except Exception as e:
+        return render_template("login.html", error=f"Database error: {e}"), 500
+
+    if not row or not check_password_hash(row["password_hash"], password):
+        audit("login_failed", username, username=username)
+        return render_template("login.html",
+                               error="Wrong username or password."), 401
+
+    session.permanent = True
+    session["username"] = row["username"]
+    session["role"] = row["role"]
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE users SET last_login = NOW() WHERE id = %s;",
+                            (row["id"],))
+    except Exception:
+        pass
+
+    audit("login_success", f"role={row['role']}")
+    nxt = request.args.get("next") or url_for("page_dashboard")
+    return redirect(nxt)
+
+
+@app.route("/logout")
+def logout():
+    audit("logout")
+    session.clear()
+    return redirect(url_for("login"))
+
+
+
+@app.route("/account", methods=["GET", "POST"])
+@login_required
+def page_account():
+    """Any signed-in user can change their own password here."""
+    user = current_user()
+    message, ok = None, False
+
+    if request.method == "POST":
+        old = request.form.get("current_password") or ""
+        new = request.form.get("new_password") or ""
+        confirm = request.form.get("confirm_password") or ""
+
+        row = query("SELECT * FROM users WHERE username = %s;",
+                    (user["username"],), one=True)
+
+        if not row or not check_password_hash(row["password_hash"], old):
+            message = "The current password is not correct."
+            audit("password_change_failed")
+        elif len(new) < 8:
+            message = "The new password must be at least 8 characters."
+        elif new != confirm:
+            message = "The two new passwords do not match."
+        elif new == old:
+            message = "The new password must be different from the old one."
+        else:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE users SET password_hash = %s WHERE id = %s;",
+                                (generate_password_hash(new), row["id"]))
+            audit("password_changed")
+            message, ok = "Your password has been changed.", True
+
+    return render_template("account.html", message=message, ok=ok,
+                           server=SERVER_NAME_TAG)
+
+
+@app.route("/users")
+@admin_required
+def page_users():
+    rows = query("SELECT username, role, created_at, last_login "
+                 "FROM users ORDER BY username;")
+    logs = query("SELECT username, action, detail, ip_address, created_at "
+                 "FROM audit_log ORDER BY created_at DESC LIMIT 30;")
+    return render_template("users.html", users=rows, logs=logs,
+                           server=SERVER_NAME_TAG, message=None)
+
+
+@app.route("/users/add", methods=["POST"])
+@admin_required
+def add_user():
+    username = (request.form.get("username") or "").strip()
+    password = request.form.get("password") or ""
+    role     = request.form.get("role") or "viewer"
+
+    message = None
+    if len(username) < 3:
+        message = "Username must be at least 3 characters."
+    elif len(password) < 8:
+        message = "Password must be at least 8 characters."
+    elif role not in ("admin", "viewer"):
+        message = "Role must be admin or viewer."
+
+    if message is None:
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO users (username, password_hash, role)
+                           VALUES (%s, %s, %s);""",
+                        (username, generate_password_hash(password), role))
+            audit("user_created", f"{username} as {role}")
+            message = f"User {username} created as {role}."
+        except psycopg2.errors.UniqueViolation:
+            message = f"User {username} already exists."
+        except Exception as e:
+            message = f"Could not create the user: {e}"
+
+    rows = query("SELECT username, role, created_at, last_login "
+                 "FROM users ORDER BY username;")
+    logs = query("SELECT username, action, detail, ip_address, created_at "
+                 "FROM audit_log ORDER BY created_at DESC LIMIT 30;")
+    return render_template("users.html", users=rows, logs=logs,
+                           server=SERVER_NAME_TAG, message=message)
+
+
+@app.route("/users/delete", methods=["POST"])
+@admin_required
+def delete_user():
+    username = request.form.get("username") or ""
+    if username == session.get("username"):
+        message = "You cannot delete the account you are signed in with."
+    else:
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM users WHERE username = %s;", (username,))
+            audit("user_deleted", username)
+            message = f"User {username} deleted."
+        except Exception as e:
+            message = f"Could not delete the user: {e}"
+
+    rows = query("SELECT username, role, created_at, last_login "
+                 "FROM users ORDER BY username;")
+    logs = query("SELECT username, action, detail, ip_address, created_at "
+                 "FROM audit_log ORDER BY created_at DESC LIMIT 30;")
+    return render_template("users.html", users=rows, logs=logs,
+                           server=SERVER_NAME_TAG, message=message)
+
+
 @app.route("/health")
 def health():
     return jsonify(status="ok", server=SERVER_NAME_TAG), 200
@@ -101,6 +351,7 @@ def add_reading():
 
 
 @app.route("/api/readings", methods=["GET"])
+@login_required
 def list_readings_api():
     limit = min(int(request.args.get("limit", 50)), 500)
     try:
@@ -131,6 +382,7 @@ def get_config():
 
 
 @app.route("/api/config", methods=["POST"])
+@admin_required
 def set_config():
     """Switch a device between naive and smart mode from the web UI."""
     data = request.get_json(silent=True) or request.form
@@ -149,10 +401,12 @@ def set_config():
                    DO UPDATE SET mode = EXCLUDED.mode, updated_at = NOW();""",
                 (device_id, mode)
             )
+    audit("mode_changed", f"{device_id} -> {mode}")
     return jsonify(device_id=device_id, mode=mode), 200
 
 
 @app.route("/api/stats")
+@login_required
 def stats_api():
     try:
         return jsonify(_collect_stats()), 200
@@ -162,6 +416,7 @@ def stats_api():
 
 
 @app.route("/api/series")
+@login_required
 def series_api():
     """Time series for the charts page."""
     hours = int(request.args.get("hours", 6))
@@ -228,6 +483,7 @@ def _collect_stats():
 # Web pages
 # ----------------------------------------------------------------------
 @app.route("/")
+@login_required
 def page_dashboard():
     try:
         s = _collect_stats()
@@ -238,6 +494,7 @@ def page_dashboard():
 
 
 @app.route("/readings")
+@login_required
 def page_readings():
     mode = request.args.get("mode", "all")
     limit = min(int(request.args.get("limit", 100)), 1000)
@@ -257,6 +514,7 @@ def page_readings():
 
 
 @app.route("/charts")
+@login_required
 def page_charts():
     hours = int(request.args.get("hours", 6))
     return render_template("charts.html", hours=hours,
@@ -264,6 +522,7 @@ def page_charts():
 
 
 @app.route("/alerts")
+@login_required
 def page_alerts():
     rows = query(
         """SELECT * FROM readings WHERE anomaly_flag = TRUE
@@ -274,6 +533,7 @@ def page_alerts():
 
 
 @app.route("/control")
+@admin_required
 def page_control():
     device_id = request.args.get("device_id", "esp32-01")
     try:
@@ -288,6 +548,28 @@ def page_control():
     updated = row["updated_at"].strftime("%Y-%m-%d %H:%M:%S") if row else None
     return render_template("control.html", device_id=device_id, mode=mode,
                            updated_at=updated, server=SERVER_NAME_TAG)
+
+
+@app.route("/readings.csv")
+@login_required
+def export_csv():
+    """Download every reading as CSV - used for the offline analysis."""
+    rows = query("""SELECT device_id, temperature, humidity, mode, anomaly_flag,
+                           device_ts, server_ts
+                    FROM readings ORDER BY server_ts;""")
+    lines = ["device_id,temperature,humidity,mode,anomaly_flag,device_ts,server_ts"]
+    for r in rows:
+        lines.append(",".join([
+            str(r["device_id"]), str(r["temperature"]), str(r["humidity"]),
+            str(r["mode"]), str(r["anomaly_flag"]),
+            r["device_ts"].isoformat() if r["device_ts"] else "",
+            r["server_ts"].isoformat() if r["server_ts"] else "",
+        ]))
+    audit("export_csv", f"{len(rows)} rows")
+    return ("\n".join(lines), 200, {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": "attachment; filename=readings.csv",
+    })
 
 
 if __name__ == "__main__":

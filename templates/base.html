@@ -32,6 +32,21 @@
   nav a:hover{color:var(--text); background:var(--panel2);}
   nav a.active{color:var(--accent); background:rgba(56,189,248,.12);}
 
+  .who{display:flex; align-items:center; gap:10px; font-size:13px;}
+  .who .uname{color:var(--text); text-decoration:none;}
+  .who .uname:hover{color:var(--accent);}
+  .who .role{
+    font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+    padding:3px 9px; border-radius:6px; font-weight:500;
+  }
+  .who .role.admin{background:rgba(56,189,248,.14); color:var(--accent);}
+  .who .role.viewer{background:rgba(134,150,174,.16); color:var(--muted);}
+  .who .out{
+    color:var(--muted); text-decoration:none; font-size:13px;
+    padding:6px 12px; border:1px solid var(--line); border-radius:8px;
+  }
+  .who .out:hover{color:var(--text); border-color:var(--muted);}
+
   main{max-width:1100px; margin:0 auto; padding:28px 24px 60px;}
   h1{font-size:24px; font-weight:600; margin:0 0 4px; letter-spacing:-.015em;}
   .sub{color:var(--muted); font-size:14px; margin:0 0 26px;}
@@ -103,8 +118,18 @@
       <a href="/readings" class="{% block n2 %}{% endblock %}">Readings</a>
       <a href="/charts" class="{% block n3 %}{% endblock %}">Charts</a>
       <a href="/alerts" class="{% block n4 %}{% endblock %}">Alerts</a>
+      {% if user and user.role == 'admin' %}
       <a href="/control" class="{% block n5 %}{% endblock %}">Control</a>
+      <a href="/users" class="{% block n6 %}{% endblock %}">Users</a>
+      {% endif %}
     </nav>
+    {% if user %}
+    <div class="who">
+      <span class="role {{ user.role }}">{{ user.role }}</span>
+      <a class="uname" href="/account">{{ user.username }}</a>
+      <a class="out" href="/logout">Sign out</a>
+    </div>
+    {% endif %}
   </div>
 </header>
 

@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Users — IoT Monitoring{% endblock %}
+{% block n6 %}active{% endblock %}
+{% block content %}
+
+<h1>Users and access</h1>
+<p class="sub">Only an administrator can reach this page, create accounts or
+switch the device between modes. A viewer can read the data and nothing else.</p>
+
+{% if message %}
+<div class="card" style="border-color:var(--accent); margin-bottom:18px;">
+  {{ message }}
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom:22px;">
+  <h2 style="margin:0 0 14px; font-size:16px; font-weight:500;">Accounts</h2>
+  <table>
+    <thead>
+      <tr><th>Username</th><th>Role</th><th>Created</th><th>Last login</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.username }}</td>
+        <td><span class="tag {{ 'smart' if u.role == 'admin' else 'naive' }}">{{ u.role }}</span></td>
+        <td>{{ u.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>{{ u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login else '—' }}</td>
+        <td style="text-align:right;">
+          {% if u.username != user.username %}
+          <form method="post" action="/users/delete" style="display:inline;">
+            <input type="hidden" name="username" value="{{ u.username }}">
+            <button class="mini" type="submit">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-bottom:22px;">
+  <h2 style="margin:0 0 14px; font-size:16px; font-weight:500;">Add an account</h2>
+  <form method="post" action="/users/add" class="addform">
+    <input name="username" placeholder="username" autocapitalize="none" required>
+    <input name="password" type="password" placeholder="password (8+ characters)" required>
+    <select name="role">
+      <option value="viewer">viewer — read only</option>
+      <option value="admin">admin — full control</option>
+    </select>
+    <button type="submit">Create</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin:0 0 14px; font-size:16px; font-weight:500;">Recent activity</h2>
+  <table>
+    <thead>
+      <tr><th>When</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>
+    </thead>
+    <tbody>
+      {% for l in logs %}
+      <tr>
+        <td>{{ l.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td>{{ l.username or '—' }}</td>
+        <td>{{ l.action }}</td>
+        <td>{{ l.detail or '—' }}</td>
+        <td>{{ l.ip_address or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">No activity recorded yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .addform{display:flex; gap:10px; flex-wrap:wrap;}
+  .addform input, .addform select{
+    flex:1 1 180px; padding:10px 13px; border-radius:9px;
+    border:1px solid var(--line); background:var(--panel2);
+    color:var(--text); font-size:14px;
+  }
+  .addform button{
+    padding:10px 22px; border:none; border-radius:9px;
+    background:var(--accent); color:#06283A; font-size:14px;
+    font-weight:500; cursor:pointer;
+  }
+  button.mini{
+    background:transparent; color:var(--muted); font-size:12.5px;
+    border:1px solid var(--line); border-radius:7px;
+    padding:5px 12px; cursor:pointer;
+  }
+  button.mini:hover{color:var(--danger); border-color:var(--danger);}
+</style>
+
+{% endblock %}

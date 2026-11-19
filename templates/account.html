@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}My account — IoT Monitoring{% endblock %}
+{% block content %}
+
+<h1>My account</h1>
+<p class="sub">Signed in as {{ user.username }} with the
+<span class="tag {{ 'smart' if user.role == 'admin' else 'naive' }}">{{ user.role }}</span>
+role.</p>
+
+{% if message %}
+<div class="card" style="margin-bottom:18px;
+     border-color:{{ 'var(--ok)' if ok else 'var(--danger)' }};
+     color:{{ 'var(--ok)' if ok else 'var(--danger)' }};">
+  {{ message }}
+</div>
+{% endif %}
+
+<div class="card" style="max-width:460px;">
+  <h2 style="margin:0 0 16px; font-size:16px; font-weight:500;">Change password</h2>
+  <form method="post" action="/account" class="pwform">
+    <label>Current password</label>
+    <input name="current_password" type="password"
+           autocomplete="current-password" required>
+
+    <label>New password</label>
+    <input name="new_password" type="password"
+           autocomplete="new-password" minlength="8" required>
+
+    <label>Repeat the new password</label>
+    <input name="confirm_password" type="password"
+           autocomplete="new-password" minlength="8" required>
+
+    <button type="submit">Change password</button>
+  </form>
+</div>
+
+<style>
+  .pwform label{
+    display:block; margin-bottom:6px; font-size:12px; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.06em;
+  }
+  .pwform input{
+    width:100%; padding:11px 13px; margin-bottom:16px; border-radius:9px;
+    border:1px solid var(--line); background:var(--panel2);
+    color:var(--text); font-size:15px;
+  }
+  .pwform input:focus{outline:none; border-color:var(--accent);}
+  .pwform button{
+    padding:11px 22px; border:none; border-radius:9px;
+    background:var(--accent); color:#06283A; font-size:14px;
+    font-weight:500; cursor:pointer;
+  }
+</style>
+
+{% endblock %}

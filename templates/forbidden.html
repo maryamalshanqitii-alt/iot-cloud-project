@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Not allowed — IoT Monitoring{% endblock %}
+{% block content %}
+
+<h1>403 — not allowed</h1>
+<p class="sub">This page needs the administrator role.</p>
+
+<div class="card">
+  <p style="margin:0 0 10px;">
+    You are signed in as <strong>{{ user.username }}</strong> with the
+    <span class="tag naive">{{ user.role }}</span> role.
+  </p>
+  <p style="margin:0; color:var(--muted); font-size:14px;">
+    Viewers can read the dashboard, the readings, the charts and the alerts.
+    Switching the device between modes and managing accounts are reserved for
+    administrators. The attempt has been written to the audit log.
+  </p>
+  <p style="margin:16px 0 0;">
+    <a href="/" style="color:var(--accent);">Back to the dashboard</a>
+  </p>
+</div>
+
+{% endblock %}

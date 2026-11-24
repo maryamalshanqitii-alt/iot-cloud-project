@@ -389,8 +389,8 @@ def set_config():
     device_id = data.get("device_id", "esp32-01")
     mode = data.get("mode")
 
-    if mode not in ("naive", "smart"):
-        return jsonify(error="mode must be 'naive' or 'smart'"), 400
+    if mode not in ("naive", "smart", "adaptive"):
+        return jsonify(error="mode must be 'naive', 'smart' or 'adaptive'"), 400
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -403,6 +403,53 @@ def set_config():
             )
     audit("mode_changed", f"{device_id} -> {mode}")
     return jsonify(device_id=device_id, mode=mode), 200
+
+
+
+@app.route("/api/decision", methods=["POST"])
+def add_decision():
+    """
+    Called by the device whenever its adaptive policy changes behaviour.
+    Machine-to-machine, so it authenticates with the API key, not a session.
+    """
+    if request.headers.get("X-API-Key") != API_KEY:
+        return jsonify(error="unauthorized"), 401
+
+    d = request.get_json(silent=True) or {}
+    decision = d.get("decision")
+    if decision not in ("naive", "smart"):
+        return jsonify(error="decision must be 'naive' or 'smart'"), 400
+
+    device_ts = d.get("device_ts")
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO adaptive_decisions
+                         (device_id, decision, reason, rtt_ms, fail_pct,
+                          rssi_dbm, free_heap, device_ts)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s);""",
+                    (d.get("device_id", "esp32-01"), decision,
+                     d.get("reason", "")[:200], d.get("rtt_ms"),
+                     d.get("fail_pct"), d.get("rssi_dbm"),
+                     d.get("free_heap"), device_ts))
+    except Exception as e:
+        return jsonify(error=str(e)), 500
+
+    return jsonify(status="recorded", decision=decision), 201
+
+
+@app.route("/api/decisions", methods=["GET"])
+@login_required
+def list_decisions():
+    rows = query("""SELECT * FROM adaptive_decisions
+                    ORDER BY server_ts DESC LIMIT 100;""")
+    return jsonify([{
+        "device_id": r["device_id"], "decision": r["decision"],
+        "reason": r["reason"], "rtt_ms": r["rtt_ms"],
+        "fail_pct": r["fail_pct"], "rssi_dbm": r["rssi_dbm"],
+        "server_ts": r["server_ts"].isoformat(),
+    } for r in rows])
 
 
 @app.route("/api/stats")
@@ -546,8 +593,17 @@ def page_control():
 
     mode = row["mode"] if row else "naive"
     updated = row["updated_at"].strftime("%Y-%m-%d %H:%M:%S") if row else None
+
+    try:
+        decisions = query("""SELECT * FROM adaptive_decisions
+                             WHERE device_id = %s
+                             ORDER BY server_ts DESC LIMIT 15;""", (device_id,))
+    except Exception:
+        decisions = []
+
     return render_template("control.html", device_id=device_id, mode=mode,
-                           updated_at=updated, server=SERVER_NAME_TAG)
+                           updated_at=updated, decisions=decisions,
+                           server=SERVER_NAME_TAG)
 
 
 @app.route("/readings.csv")

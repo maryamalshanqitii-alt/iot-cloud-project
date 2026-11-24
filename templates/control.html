@@ -4,23 +4,18 @@
 {% block content %}
 
 <h1>Device Control</h1>
-<p class="sub">Switch the edge device between Naive and Smart Edge mode remotely.
-The device polls this setting every 15&nbsp;seconds, so no USB cable is needed.</p>
+<p class="sub">Choose how the edge device decides what to transmit. It polls this
+setting every 15&nbsp;seconds, so no USB cable is needed.</p>
 
 <div class="card" style="padding:18px;">
   <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
     <div>
-      <div style="color:var(--muted); font-size:12px; text-transform:uppercase;
-                  letter-spacing:.08em;">Device</div>
+      <div class="label">Device</div>
       <div style="font-size:18px; font-weight:600;">{{ device_id }}</div>
     </div>
     <div style="margin-left:auto; text-align:right;">
-      <div style="color:var(--muted); font-size:12px; text-transform:uppercase;
-                  letter-spacing:.08em;">Current mode</div>
-      <div id="modeLabel" style="font-size:22px; font-weight:600;
-           color:{{ 'var(--ok)' if mode == 'smart' else 'var(--warn)' }};">
-        {{ mode }}
-      </div>
+      <div class="label">Current mode</div>
+      <div id="modeLabel" style="font-size:22px; font-weight:600;">{{ mode }}</div>
       <div id="updated" style="color:var(--muted); font-size:12px;">
         {{ updated_at or '—' }}
       </div>
@@ -28,46 +23,112 @@ The device polls this setting every 15&nbsp;seconds, so no USB cable is needed.<
   </div>
 
   <div style="display:flex; gap:10px; margin-top:20px; flex-wrap:wrap;">
-    <button class="btn" data-mode="naive">Set NAIVE (baseline)</button>
+    <button class="btn" data-mode="naive">Set NAIVE</button>
     <button class="btn" data-mode="smart">Set SMART EDGE</button>
+    <button class="btn adaptive" data-mode="adaptive">Set ADAPTIVE</button>
   </div>
 
   <div id="msg" style="margin-top:14px; font-size:14px; color:var(--muted);"></div>
 </div>
 
 <div class="card" style="padding:16px; margin-top:16px;">
-  <h2 style="margin-top:0; font-size:16px;">What each mode does</h2>
+  <h2 style="margin-top:0; font-size:16px; font-weight:500;">What each mode does</h2>
   <table>
-    <thead><tr><th>&nbsp;</th><th>Naive</th><th>Smart Edge</th></tr></thead>
+    <thead>
+      <tr><th>&nbsp;</th><th>Naive</th><th>Smart edge</th><th>Adaptive</th></tr>
+    </thead>
     <tbody>
-      <tr><td>Sampling</td><td>1 / second</td><td>1 / second</td></tr>
-      <tr><td>Filtering</td><td>none</td><td>moving average, 5 samples</td></tr>
-      <tr><td>Transmission</td><td>every sample</td><td>only if &Delta;T &ge; 0.5&nbsp;&deg;C</td></tr>
-      <tr><td>Heartbeat</td><td>n/a</td><td>every 30&nbsp;s</td></tr>
-      <tr><td>Anomaly detection</td><td>cloud only</td><td>on the device</td></tr>
+      <tr>
+        <td>Sampling</td>
+        <td>1 / second</td><td>1 / second</td><td>1 / second</td>
+      </tr>
+      <tr>
+        <td>Filtering</td>
+        <td>none</td><td>moving average, 5 samples</td>
+        <td>decided by the device</td>
+      </tr>
+      <tr>
+        <td>Transmission</td>
+        <td>every sample</td><td>only if &Delta;T &ge; 0.5&nbsp;&deg;C</td>
+        <td>switches with conditions</td>
+      </tr>
+      <tr>
+        <td>Heartbeat</td>
+        <td>n/a</td><td>every 30&nbsp;s</td><td>when filtering</td>
+      </tr>
+      <tr>
+        <td>Anomaly detection</td>
+        <td>cloud only</td><td>on the device</td><td>on the device</td>
+      </tr>
+      <tr>
+        <td>Decided by</td>
+        <td>the operator</td><td>the operator</td>
+        <td>measured latency, loss and signal</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="padding:16px; margin-top:16px;">
+  <h2 style="margin-top:0; font-size:16px; font-weight:500;">
+    Adaptive decisions
+  </h2>
+  <p class="sub" style="margin-bottom:14px;">
+    Every time the adaptive policy changes behaviour, the device reports the
+    measurement that triggered it. Empty until the device runs in adaptive mode.
+  </p>
+  <table>
+    <thead>
+      <tr><th>When</th><th>Chose</th><th>Because</th>
+          <th>RTT</th><th>Fails</th><th>Signal</th></tr>
+    </thead>
+    <tbody>
+      {% for d in decisions %}
+      <tr>
+        <td style="color:var(--muted);">{{ d.server_ts.strftime('%H:%M:%S') }}</td>
+        <td><span class="tag {{ d.decision }}">{{ d.decision }}</span></td>
+        <td>{{ d.reason }}</td>
+        <td>{{ d.rtt_ms if d.rtt_ms is not none else '—' }} ms</td>
+        <td>{{ d.fail_pct if d.fail_pct is not none else '—' }} %</td>
+        <td>{{ d.rssi_dbm if d.rssi_dbm is not none else '—' }} dBm</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">No decisions recorded yet.</td></tr>
+      {% endfor %}
     </tbody>
   </table>
 </div>
 
 <style>
+  .label{
+    font-size:12px; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.08em;
+  }
   .btn{
-    background:var(--panel2); color:var(--text); border:1px solid rgba(255,255,255,.12);
+    background:var(--panel2); color:var(--text);
+    border:1px solid var(--line);
     padding:12px 18px; border-radius:10px; font-size:15px; font-weight:500;
-    cursor:pointer; min-width:190px;
+    cursor:pointer; min-width:170px;
   }
   .btn:hover{border-color:var(--accent); color:var(--accent);}
   .btn:active{transform:translateY(1px);}
+  .btn.adaptive{border-color:rgba(52,211,153,.45);}
+  .btn.adaptive:hover{border-color:var(--ok); color:var(--ok);}
+  .tag.adaptive{background:rgba(52,211,153,.14); color:var(--ok);}
 </style>
 
 <script>
 const DEVICE_ID = {{ device_id|tojson }};
+const COLORS = {naive:'var(--warn)', smart:'var(--accent)', adaptive:'var(--ok)'};
 
 function paint(mode, updated){
   const el = document.getElementById('modeLabel');
   el.textContent = mode;
-  el.style.color = (mode === 'smart') ? 'var(--ok)' : 'var(--warn)';
+  el.style.color = COLORS[mode] || 'var(--text)';
   if (updated) document.getElementById('updated').textContent = updated;
 }
+
+paint({{ mode|tojson }});
 
 document.querySelectorAll('.btn').forEach(function(b){
   b.addEventListener('click', function(){
